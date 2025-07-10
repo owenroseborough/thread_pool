@@ -1,11 +1,12 @@
-#include <vector>
-#include <thread>
-#include <mutex>
-#include <future>
 #include <chrono>
-#include <stdexcept>
-#include <ostream>
+#include <concepts>
+#include <future>
 #include <iostream>
+#include <mutex>
+#include <ostream>
+#include <stdexcept>
+#include <thread>
+#include <vector>
 
 template<typename Time>
 concept IsChronoTime = std::is_same<std::chrono::nanoseconds, Time>::value ||
@@ -15,6 +16,7 @@ concept IsChronoTime = std::is_same<std::chrono::nanoseconds, Time>::value ||
                         std::is_same<std::chrono::minutes, Time>::value ||
                         std::is_same<std::chrono::hours, Time>::value;
 
+/*
 class ThreadPool {
 private:
     int count_;
@@ -38,10 +40,6 @@ public:
     }
 
     void detach_task(std::function<void()> task) {
-
-    }
-
-    void wait() {
 
     }
 
@@ -70,8 +68,6 @@ public:
     [[nodiscard]] std::future<T> submit_task(std::function<T()> task) {
         //TODO: template method has to be implemented in interface file
     }
-
-    void detach_task(std::function<void()> task);
 
     void wait(); //wait for all the tasks in the queue to complete
                  //other tasks may be submitted while we are waiting
@@ -105,8 +101,8 @@ public:
     }
 
     //use concepts to verify start and end types coalesce into correct W type
-    template<typename T, typename U, typename V, typename W>
-    multi_future<void> submit_loop(U start, V end, std::function<void()> loop, size_t num_blocks = 10){
+    template<typename U, typename V, typename W>
+    auto submit_loop(U start, V end, std::function<void()> loop, size_t num_blocks = 10){
         //TODO: template method has to be implemented in interface file
         for (W i = start; i < end; ++i)
             loop(i);
@@ -121,17 +117,18 @@ public:
     }
 
     //use concepts to verify start and end types coalesce into correct W type
-    template<typename T, typename U, typename V, typename W>
-    multi_future<T> submit_blocks(U start, V end, std::function<void()> loop, size_t num_blocks = 10) {
+    template<typename U, typename V, typename W>
+    auto submit_blocks(U start, V end, std::function<void()> loop, size_t num_blocks = 10) {
         //TODO: template method has to be implemented in interface file
-        loop(i);
+        W placeholder;
+        //loop(i);
     }
 
     //use concepts to verify start and end types coalesce into correct W type
     template<typename T, typename U, typename V, typename W>
     void detach_blocks(U start, V end, std::function<void()> loop, size_t num_blocks = 10) {
         //TODO: template method has to be implemented in interface file
-        loop(i);
+        //loop(i);
     }
 
     template<typename T, typename U, typename V, typename W>
@@ -139,12 +136,13 @@ public:
         //TODO: template method has to be implemented in interface file
     }
 
-    template<typename T, typename U, typename V, typename W>
+    template<typename U, typename V, typename W>
     void detach_sequence(U start, V end, std::function<void()> callable) {
         //TODO: template method has to be implemented in interface file
     }
 };
-
+*/
+/*
 template<typename T>
 class multi_future {
 private:
@@ -152,7 +150,10 @@ private:
 public:
     multi_future() {};
 
-    multi_future(size_t num_futures) : futures(num_futures, std::future<T> future) {}
+    multi_future(size_t num_futures) {
+        std::future<T> future;
+        futures(num_futures, future);
+    }
     
     std::future<T>& operator[](size_t index) {
         return futures.at(index);
@@ -232,14 +233,17 @@ public:
         return false;
     }
 };
+*/
 
 class synced_stream {
 private:
     std::vector<std::ostream*> streams;
     std::mutex stream_mutex;
+    
 public:
-    synced_stream() {};
 
+    synced_stream() : streams(1, &std::cout) {};
+    
     synced_stream(std::ostream* stream) : streams(1, stream) {};
 
     void add_stream(std::ostream* stream) {
@@ -257,27 +261,41 @@ public:
         }
     }
 
-    //takes an arbitrary number of arguments, which are inserted 
+    void endl() {
+        std::lock_guard<std::mutex> lock(stream_mutex);
+        for (auto& stream : streams) {
+            *stream << std::endl;
+        }
+    }
+
+    void flush() {
+        std::lock_guard<std::mutex> lock(stream_mutex);
+        for (auto& stream : streams) {
+            *stream << std::flush;
+        }
+    }
+
+    //takes an arbitrary number of string arguments, which are inserted 
     // into the stream one by one, in the order they were given
     template<typename... Args>
     void print(Args... args) {
         std::lock_guard<std::mutex> lock(stream_mutex);
         for (auto& stream : streams) {
-            stream << ... << args;
+            ((*stream << args), ...);
         }
     }
-    //same as print() above, but also inserts newline between arguments
+    
+    //same as print() above, but also inserts newline between string arguments
     template<typename... Args>
     void println(Args... args) {
         std::lock_guard<std::mutex> lock(stream_mutex);
-        for (auto& stream: streams) {
-            (void)std::initializer_list<int>{
-                ((stream << args << '\n'), 0)...
-            };
+        for (auto& stream : streams) {
+            ((*stream << args << '\n'), ...);
         }
     }
 };
 
+/*
 class this_thread {
 private:
     thread_local static std::optional<size_t> thread_index_;
@@ -295,4 +313,4 @@ public:
         return std::nullopt;
     }
 };
-
+*/
