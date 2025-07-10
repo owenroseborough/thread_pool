@@ -235,31 +235,64 @@ public:
 
 class synced_stream {
 private:
+    std::vector<std::ostream*> streams;
     std::mutex stream_mutex;
 public:
     synced_stream() {};
+
+    synced_stream(std::ostream* stream) : streams(1, stream) {};
+
+    void add_stream(std::ostream* stream) {
+        streams.push_back(stream);
+    }
+
+    void remove_stream(std::ostream* stream) {
+        size_t pos = 0;
+        for (auto& streamIt: streams) {
+            if (streamIt == stream) {
+                streams.erase(streams.begin() + pos);
+                break;
+            }
+            pos++;
+        }
+    }
 
     //takes an arbitrary number of arguments, which are inserted 
     // into the stream one by one, in the order they were given
     template<typename... Args>
     void print(Args... args) {
         std::lock_guard<std::mutex> lock(stream_mutex);
-        std::cout << ... << args;
+        for (auto& stream : streams) {
+            stream << ... << args;
+        }
     }
     //same as print() above, but also inserts newline between arguments
     template<typename... Args>
     void println(Args... args) {
         std::lock_guard<std::mutex> lock(stream_mutex);
-        (void)std::initializer_list<int>{
-            ((std::cout << args << '\n'), 0)...
-        };
+        for (auto& stream: streams) {
+            (void)std::initializer_list<int>{
+                ((stream << args << '\n'), 0)...
+            };
+        }
     }
 };
 
 class this_thread {
 private:
-
+    thread_local static std::optional<size_t> thread_index_;
+    thread_local static std::optional<void*> poolPointer_;
 public:
-
+    friend class ThreadPool;
+    std::optional<std::size_t> get_index() {
+        if (thread_index_)
+            return *thread_index_;
+        return std::nullopt;
+    }
+    std::optional<void*> get_pool() {
+        if (poolPointer_)
+            return *poolPointer_;
+        return std::nullopt;
+    }
 };
 
