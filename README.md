@@ -1,4 +1,4 @@
-# 🧵   Thread Pool, Thread Utilities and Synced Stream in C++20
+# Thread Pool, Thread Utilities and Synced Stream in C++20
 
 This project provides C++20 utilities for multithreaded programming, including:
 
