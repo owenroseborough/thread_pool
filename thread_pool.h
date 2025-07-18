@@ -16,6 +16,14 @@ concept IsChronoTime = std::is_same<std::chrono::nanoseconds, Time>::value ||
                         std::is_same<std::chrono::minutes, Time>::value ||
                         std::is_same<std::chrono::hours, Time>::value;
 
+template<typename Stream>
+concept IsOstream = std::is_same<std::ostream*, Stream>::value ||
+                    std::is_same<std::ofstream*, Stream>::value ||
+                    std::is_same<std::ostringstream*, Stream>::value ||
+                    std::is_same<std::iostream*, Stream>::value ||
+                    std::is_same<std::fstream*, Stream>::value ||
+                    std::is_same<std::stringstream*, Stream>::value;
+
 /*
 class ThreadPool {
 private:
@@ -142,7 +150,7 @@ public:
     }
 };
 */
-/*
+
 template<typename T>
 class multi_future {
 private:
@@ -151,25 +159,31 @@ public:
     multi_future() {};
 
     multi_future(size_t num_futures) {
-        std::future<T> future;
-        futures(num_futures, future);
-    }
-    
-    std::future<T>& operator[](size_t index) {
-        return futures.at(index);
+        for (auto i{ 0 }; i < num_futures; ++i) {
+            std::future<T> future;
+            futures.push_back(std::move(future));
+        } 
     }
 
-    void push_back(std::future<T> future) {
-        futures.push_back(future);
-    }
+    
 
     void reserve(size_t size) {
         futures.reserve(size);
     }
 
-    size_t size() {
+    size_t size() const {
         return futures.size();
     }
+
+    void push_back(std::future<T> &future) {
+        futures.push_back(std::move(future));
+    }
+
+    std::future<T>& operator[](size_t index) {
+        return futures.at(index);
+    }
+    
+    /*
 
     //wait for all futures to be completed
     void wait() {
@@ -190,7 +204,7 @@ public:
     }
 
     //check how many futures are ready
-    size_t ready_count() {
+    size_t ready_count() const {
         size_t num_ready{};
         for (auto future: futures) {
             if (future.valid())
@@ -200,7 +214,7 @@ public:
     }
 
     //check if all the stored futures are valid
-    bool valid() {
+    bool valid() const {
         for (auto future : futures) {
             if (!future.valid())
                 return false;
@@ -232,8 +246,8 @@ public:
             return true;
         return false;
     }
+    */
 };
-*/
 
 class synced_stream {
 private:
@@ -243,22 +257,28 @@ private:
 public:
 
     synced_stream() : streams(1, &std::cout) {};
-    
-    synced_stream(std::ostream* stream) : streams(1, stream) {};
 
-    void add_stream(std::ostream* stream) {
+    template<IsOstream... Args>
+    synced_stream(Args... args) {
+        ((streams.push_back(args)), ...);
+    };
+
+    size_t get_num_streams() const {
+        return streams.size();
+    }
+
+    template<IsOstream T>
+    void add_stream(T stream) {
+        //check that ostream* not already in streams
+        if (std::find(streams.begin(), streams.end(), stream) != streams.end())
+            return;
         streams.push_back(stream);
     }
 
     void remove_stream(std::ostream* stream) {
-        size_t pos = 0;
-        for (auto& streamIt: streams) {
-            if (streamIt == stream) {
-                streams.erase(streams.begin() + pos);
-                break;
-            }
-            pos++;
-        }
+
+        auto newEnd = std::remove(streams.begin(), streams.end(), stream);
+        streams.erase(newEnd, streams.end());
     }
 
     void endl() {
