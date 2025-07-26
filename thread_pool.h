@@ -1,12 +1,21 @@
 #include <chrono>
 #include <concepts>
+#include <functional>
 #include <future>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <ostream>
+#include <queue>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
+
+template <class T> struct is_xvalue : std::false_type {};
+//template <class T> struct is_xvalue<T&> : std::false_type {};
+template <class T> struct is_xvalue<T&&> : std::true_type {};
 
 template<typename Time>
 concept IsChronoTime = std::is_same<std::chrono::nanoseconds, Time>::value ||
@@ -24,20 +33,151 @@ concept IsOstream = std::is_same<std::ostream*, Stream>::value ||
                     std::is_same<std::fstream*, Stream>::value ||
                     std::is_same<std::stringstream*, Stream>::value;
 
-/*
+class function_wrapper
+{
+    struct impl_base {
+        virtual void call() = 0;
+        virtual ~impl_base() {}
+    };
+    std::unique_ptr<impl_base> impl;
+    template<typename F>
+    struct impl_type : impl_base
+    {
+        F f;
+        impl_type(F&& f_) : f(std::move(f_)) {}
+        void call() { f(); }
+    };
+public:
+    template<typename F>
+    function_wrapper(F&& f) :
+        impl(new impl_type<F>(std::move(f)))
+    {}
+    void operator() () { impl->call(); }
+    function_wrapper() = default;
+    function_wrapper(function_wrapper&& other) :
+        impl(std::move(other.impl))
+    {}
+    function_wrapper& operator=(function_wrapper&& other)
+    {
+        impl = std::move(other.impl);
+        return *this;
+    }
+    function_wrapper(const function_wrapper&) = delete;
+    function_wrapper(function_wrapper&) = delete;
+    function_wrapper& operator=(const function_wrapper&) = delete;
+};
+
+class comparator_class {
+public:
+    bool operator()(std::pair<size_t, function_wrapper> o1, std::pair<size_t, function_wrapper> o2)
+    {
+        return (o1.first < o2.first);
+    }
+};
+
+class priority_queue_mutex
+{
+private:
+    typedef std::pair<size_t, function_wrapper> data_type;
+    std::priority_queue<data_type, std::vector<data_type>, comparator_class> m_queue;
+    mutable std::mutex m_mutex;
+
+public:
+    priority_queue_mutex()
+    {}
+    
+    priority_queue_mutex(const priority_queue_mutex& other) = delete;
+    priority_queue_mutex& operator=(
+        const priority_queue_mutex& other) = delete;
+
+    void push(size_t priority, function_wrapper& func)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        std::pair<size_t, function_wrapper> my_pair(priority, std::move(func));
+        //auto second_pair(std::move(my_pair));
+
+        // Expression `std::move(my_pair)` is xvalue
+        static_assert(is_xvalue<decltype((std::move(my_pair)))>::value);
+        // Type of variable std::move(my_pair) is rvalue reference
+        static_assert(std::is_rvalue_reference<decltype(std::move(my_pair))>::value);
+        m_queue.push(const_cast<std::pair<size_t, function_wrapper> &&>(std::move(my_pair)));
+        m_queue.push(std::make_pair(std::move(priority), std::move()));
+    }
+
+    bool empty() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_queue.empty();
+    }
+    
+    
+    bool try_pop(function_wrapper& res)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_queue.empty())
+        {
+            return false;
+        }
+        /*
+        res = std::move(const_cast<function_wrapper&>(m_queue.top().second));
+        m_queue.pop();
+        */
+        return true;
+        
+    }
+    
+    
+};
+
 class ThreadPool {
 private:
-    int count_;
-    std::function<void(std::optional<size_t>)> initFunction_;
-    std::function<void(std::optional<size_t>)> cleanupFunction_;
-public:
-    ThreadPool(std::function<void(std::optional<size_t>)> initFunc) : count_(0), initFunction_(initFunc) {};
+    priority_queue_mutex m_queue;
+    std::function<void(std::optional<size_t>)> m_initFunction;
+    std::function<void(std::optional<size_t>)> m_cleanupFunction;
+    std::vector<std::thread> m_threads;
+    std::atomic_bool done;
+    const static size_t default_num_threads = 10;
 
-    ThreadPool(int num, std::function<void(std::optional<size_t>)> initFunc) : count_(num), initFunction_(initFunc) {};
+    void worker_thread()
+    {
+        while (!done)
+        {
+            
+            function_wrapper task;
+            if (m_queue.try_pop(task))
+            {
+                task();
+            }
+            else
+            {
+                std::this_thread::yield();
+            }
+            
+        }
+    }
+public:
+    ThreadPool() {
+        unsigned int n = std::thread::hardware_concurrency();
+        if (n > 0) {
+            for (unsigned int i = 0; i < n; ++i) {
+                m_threads.push_back(std::thread(&ThreadPool::worker_thread, this));
+            }
+        }
+        else {
+            for (auto i = 0; i < default_num_threads; ++i) {
+                m_threads.push_back(std::thread(&ThreadPool::worker_thread, this));
+            }
+        }
+    }
 
     size_t get_thread_count() {
-        return count_;
+        return m_threads.size();
     }
+    /*
+    ThreadPool(std::function<void(std::optional<size_t>)> initFunc) : m_initFunction(initFunc) {
+
+    };
+    ThreadPool(int num, std::function<void(std::optional<size_t>)> initFunc) : count_(num), initFunction_(initFunc) {};
 
     void reset(int numThreads) {
 
@@ -148,8 +288,8 @@ public:
     void detach_sequence(U start, V end, std::function<void()> callable) {
         //TODO: template method has to be implemented in interface file
     }
+    */
 };
-*/
 
 template<typename T>
 class multi_future {
@@ -164,8 +304,6 @@ public:
             futures.push_back(std::move(future));
         } 
     }
-
-    
 
     void reserve(size_t size) {
         futures.reserve(size);
@@ -182,15 +320,23 @@ public:
     std::future<T>& operator[](size_t index) {
         return futures.at(index);
     }
-    
-    /*
 
-    //wait for all futures to be completed
-    void wait() {
-        for (auto future: futures) {
+    void wait() { //wait for all futures to be completed
+        for (auto future : futures) {
             future.wait();
         }
     }
+
+    size_t ready_count() const {
+        size_t num_ready{};
+        for (auto& future : futures) {
+            if (future.valid())
+                num_ready++;
+        }
+        return num_ready;
+    }
+    
+    /*
 
     //get results for all futures
     std::vector<T> get() {
